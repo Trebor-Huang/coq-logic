@@ -58,16 +58,16 @@ Inductive Proves : list formula -> formula -> Prop :=
   | universal_generalization : forall (P : formula) (v : variable) (prem : list formula),
       (Proves prem P) -> (Proves prem (forallf v P)).
 
-Notation " Gamma |- P " := (Proves Gamma P)
+Notation " Gamma |-0 P " := (Proves Gamma P)
   (at level 95, no associativity).
 
-Example seq_id : forall P : formula, [P] |- P.
+Example seq_id : forall P : formula, [P] |-0 P.
 Proof.
   intros. apply from_premise. simpl. left. reflexivity.
 Qed.
 
 Lemma weaken : forall (prem prem' : list formula) (P : formula),
-  incl prem prem' -> prem |- P -> prem' |- P.
+  incl prem prem' -> prem |-0 P -> prem' |-0 P.
 Proof.
   intros. induction H0.
   - apply from_premise. apply H. assumption.
@@ -152,28 +152,129 @@ Inductive ClassicalAxiom : formula -> Prop :=
   | universal_implication : forall (v : variable) (P Q : formula),
       ~ (FreeInFormula v P) -> ClassicalAxiom ((forallf v (P --> Q)) --> P --> forallf v Q).
 
+Notation ClassicalAxioms ax := (forall F : formula, In F ax -> ClassicalAxiom F).
+
 Definition ProvesClassically (prems : list formula) (concl : formula) :=
-  exists ax : list formula, (fold_right and True (map ClassicalAxiom ax)) /\
-    (prems ++ ax |- concl).
+  exists ax : list formula, (forall F : formula, In F ax -> ClassicalAxiom F) /\
+    (prems ++ ax |-0 concl).
 
 Notation "G |-c concl" := (ProvesClassically G concl)
   (at level 95, no associativity).
 
-Theorem id_impl : forall (A : formula), [] |-c A --> A.
-Proof.
-  intros.
-  exists [
-        (A --> A --> A) ;
-        (A --> (A --> A) --> A);
-        ((A --> ((A --> A) --> A)) --> ((A --> (A --> A)) --> (A --> A)))
-  ]. split.
-  - repeat constructor.
-  - apply modus_ponens with (A --> A --> A).
-    apply from_premise. left. reflexivity.
-    apply modus_ponens with (A --> (A --> A) --> A).
-    apply from_premise. right. left. reflexivity.
-    apply from_premise. right. right. left. reflexivity.
-Qed.
+Module ListManipulationTactics.
+  Lemma nil_incl : forall {A : Set} (G : list A),
+    incl [] G.
+  Proof. intros A G a H. inversion H. Qed.
+
+  Lemma app_incl : forall {A : Set} (l m n : list A),
+    incl (l ++ m) n -> incl l n /\ incl m n.
+  Proof.
+    intros.
+    assert (incl l (l++m)) by (apply incl_appl; apply incl_refl).
+    assert (incl m (l++m)) by (apply incl_appr; apply incl_refl).
+    split; apply incl_tran with (l++m); assumption; assumption.
+  Qed.
+
+  Lemma singleton : forall {A : Set} (l : list A) (a : A),
+    [a] ++ l = a :: l.
+  Proof. reflexivity. Qed.
+
+  Ltac auto_in := progress repeat (
+    repeat ( (* break the goal *)
+      try assumption;
+      match goal with
+      | |- In ?A (?B ++ ?C) =>
+        apply in_or_app;
+        (try (left; auto_in));
+        (right; auto_in)
+      | |- In ?A (?B :: ?C) =>
+        (try (left; reflexivity));
+        (right; auto_in)
+      end
+    );
+    repeat ( (* break the premises *)
+      match goal with
+      | H : In ?A (?B ++ ?C) |- _ =>
+        destruct (in_app_or _ _ _ H); clear H
+      | H : In ?A (?B :: ?C) |- _ =>
+        let E := fresh H in
+        let H' := fresh H in
+          destruct (in_inv _ _ _ H) as [E | H']; [rewrite E | idtac]; clear H
+      end
+    )
+  ).
+
+  Ltac _search_for_incl := progress (
+    repeat ( (* search for a solution *)
+      try apply incl_refl; try assumption;
+      match goal with
+      | |- incl ?A (?B ++ ?C) =>
+        (try (apply incl_appl; _search_for_incl));
+        (apply incl_appr; _search_for_incl)
+      | |- incl [?A] ?B => auto_in
+      | |- incl [] _ => (apply nil_incl)
+      end
+    )
+  ).
+  (* Automatically solves problems of the form
+   * A1 ++ A2 ++ a :: A3 `incl` B1 ++ a :: B2 ++ B3 ++ A2 etc. *)
+  Ltac auto_incl := progress (
+    repeat ( (* Destruct all the relevant premises *)
+      match goal with
+      | H : incl (?A ++ ?B) ?C |- _ =>
+        destruct (app_incl A B C H); clear H
+      | H : incl (?A :: nil) ?C |- _ => auto_in
+      | H : incl (?A :: ?B) ?C |- _ =>
+        let H0 := fresh H in
+          assert (H0 : incl ([A] ++ B) C) by (simpl; assumption);
+          destruct (app_incl [A] B C H0); clear H; clear H0
+      end
+    );
+    repeat ( (* split *)
+      match goal with
+      | |- incl (?A ++ ?B) ?C => apply incl_app
+      | |- incl (?A :: nil) ?C => 
+        auto_in (* todo : use auto_in *)
+      | |- incl (?A :: ?B) ?C =>
+        rewrite <- singleton; apply incl_app
+      end
+    );
+    _search_for_incl
+  ).
+
+  Lemma classical_nil : ClassicalAxioms [].
+  Proof.
+    intros. inversion H.
+  Qed.
+
+  Lemma classical_app : forall (G H : list formula),
+    ClassicalAxioms G -> ClassicalAxioms H -> ClassicalAxioms (G ++ H).
+  Proof.
+    intros. rewrite in_app_iff in H2. destruct H2.
+    apply H0. assumption. apply H1. assumption.
+  Qed.
+
+  Lemma classical_singleton : forall (P : formula)(G : list formula),
+    ClassicalAxiom P -> ClassicalAxioms G -> ClassicalAxioms (P :: G).
+  Proof.
+    intros. inversion H1.
+    rewrite <- H2. assumption.
+    apply H0. assumption.
+  Qed.
+
+  Ltac auto_classical := repeat (
+    try assumption;
+    match goal with
+    | |- ClassicalAxiom _ => constructor
+    | |- ClassicalAxioms [] => apply classical_nil
+    | |- ClassicalAxioms (?A :: ?G) => apply (classical_singleton A G)
+    | |- ClassicalAxioms (?A ++ ?B) => apply (classical_app A B)
+    end
+  ).
+
+End ListManipulationTactics.
+
+Import ListManipulationTactics.
 
 Theorem weaken_c : forall (G H : list formula) (P : formula),
   incl G H -> G |-c P -> H |-c P.
@@ -181,9 +282,9 @@ Proof.
   unfold ProvesClassically; intros G H P Hincl HGP.
   destruct HGP as  [axG [axGc HseqG] ].
   exists axG. split.
-  assumption.
+  auto_classical.
   apply weaken with (G ++ axG).
-  apply incl_app. apply incl_appl. assumption. apply incl_appr. apply incl_refl.
+  auto_incl.
   assumption.
 Qed.
 
@@ -193,35 +294,26 @@ Lemma from_premise_c : forall (prem : list formula) (stmt : formula),
   (In stmt prem -> prem |-c stmt).
 Proof.
   intros. exists [].
-  simpl. split. trivial.
+  split. auto_classical.
   apply from_premise.
-  rewrite app_nil_r. assumption.
+  auto_in.
 Qed.
 
-Lemma modus_ponens_c : forall (P Q : formula) (prem : list formula),
+Lemma modus_ponens_c : forall (prem : list formula) (P Q : formula),
   prem |-c P -> prem |-c (P --> Q) ->
   prem |-c Q.
 Proof.
-  unfold ProvesClassically. intros P Q prem HP HPQ.
+  unfold ProvesClassically. intros prem P Q HP HPQ.
   destruct HP as [axHP [axHPc HPseq] ].
   destruct HPQ as [axHPQ [axHPQc HPQseq] ].
   exists (axHP ++ axHPQ). split.
-  - clear HPseq.
-    induction axHP.
-    + simpl. assumption.
-    + simpl.
-      simpl in axHPc. destruct axHPc. split.
-      assumption.
-      apply IHaxHP.
-      assumption.
+  - auto_classical.
   - apply modus_ponens with P.
     apply weaken with (prem ++ axHP).
-    rewrite app_assoc. apply incl_appl. apply incl_refl.
+    auto_incl.
     assumption.
     apply weaken with (prem ++ axHPQ).
-    apply incl_app.
-    apply incl_appl. apply incl_refl.
-    apply incl_appr. apply incl_appr. apply incl_refl.
+    auto_incl.
     assumption.
 Qed.
 
@@ -239,8 +331,61 @@ Lemma from_axiom_c : forall (G : list formula) (P : formula),
   (ClassicalAxiom P) -> G |-c P.
 Proof.
   intros. exists [P]. split.
-  simpl. tauto.
-  apply from_premise. apply in_app_iff. right. left. reflexivity.
+  auto_classical.
+  apply from_premise.
+  auto_in.
+Qed.
+
+Theorem id_impl : forall (A : formula), [] |-c A --> A.
+Proof.
+  intros.
+  exists [
+        (A --> A --> A) ;
+        (A --> (A --> A) --> A);
+        ((A --> ((A --> A) --> A)) --> ((A --> (A --> A)) --> (A --> A)))
+  ]. split.
+  - auto_classical.
+  - simpl. apply modus_ponens with (A --> A --> A).
+    apply from_premise. auto_in.
+    apply modus_ponens with (A --> (A --> A) --> A).
+    apply from_premise. auto_in.
+    apply from_premise. auto_in.
+Qed.
+
+Lemma from_axiom_d : forall (G : list formula) (P : formula) (A : formula),
+  (ClassicalAxiom A) -> G |-c P --> A.
+Proof.
+  intros.
+  apply modus_ponens_c with A.
+  apply from_axiom_c. assumption.
+  apply from_axiom_c. constructor.
+Qed.
+
+Lemma from_premise_d : forall (G : list formula) (P : formula) (A : formula),
+  (In A G) -> G |-c P --> A.
+Proof.
+  intros.
+  apply modus_ponens_c with A.
+  apply from_premise_c. auto_in.
+  apply from_axiom_c. constructor.
+Qed.
+
+Lemma modus_ponens_d : forall (G : list formula) (P : formula) (A B : formula),
+  G |-c P --> A -> G |-c P --> A --> B ->
+  G |-c P --> B.
+Proof.
+  intros. apply modus_ponens_c with (P --> A).
+  assumption. apply modus_ponens_c with (P --> A --> B).
+  assumption. apply from_axiom_c. constructor.
+Qed.
+
+Lemma universal_generalization_d : forall (G : list formula) (P : formula) (v : variable) (A : formula),
+  (~ FreeInFormula v P) -> (G |-c P --> A) -> (G |-c P --> (forallf v A)).
+Proof.
+  intros.
+  apply modus_ponens_c with (forallf v (P --> A)).
+  apply universal_generalization_c. assumption.
+  apply from_axiom_c. apply universal_implication. assumption.
 Qed.
 
 Theorem deduction : forall (P Q : formula) (G : list formula),
@@ -254,35 +399,21 @@ Proof.
   - (* By premise or axiom, we find out which *)
     rewrite Heqprem in H. inversion H.
     (* it is by P itself *)
-    rewrite H0. apply weaken_c with [].
-      intros f [].
-      apply id_impl.
+    rewrite H0. apply weaken_c with []. auto_incl. apply id_impl.
     (* It is either by some other premise or axiom *)
     clear H.
     rewrite in_app_iff in H0. destruct H0.
     (* It is by premise, we use axiom K *)
-    apply modus_ponens_c with stmt. {
-      apply from_premise_c. assumption.
-    } {
-      apply from_axiom_c. constructor.
-    }
+    apply from_premise_d. assumption.
     (* It is by axiom, we also use axiom K *)
-    apply modus_ponens_c with stmt. {
-      exists Hseqax. split.
-      assumption. apply from_premise. rewrite in_app_iff. right. assumption.
-    } {
-      apply from_axiom_c. constructor.
-    }
+    apply from_axiom_d. apply Hax. assumption.
   - (* by modus ponens, we use axiom S *)
-    apply modus_ponens_c with (P --> P0).
+    apply modus_ponens_d with P0.
     apply IHHseqproof1. assumption.
-    apply modus_ponens_c with (P --> P0 --> Q).
     apply IHHseqproof2. assumption.
-    apply from_axiom_c. constructor.
   - (* by universal generalization, we use the quantifier axiom *)
-    apply modus_ponens_c with (forallf v (P --> P0)).
-    apply universal_generalization_c. apply IHHseqproof. assumption.
-    apply from_axiom_c. constructor. apply HClosed.
+    apply universal_generalization_d.
+    apply HClosed. apply IHHseqproof. assumption.
 Qed.
 
 (* We introduce more connectives *)
@@ -328,15 +459,23 @@ Proof.
   assumption. apply from_axiom_c. constructor.
 Qed.
 
+Lemma contraposition_d : forall (G : list formula)(P A B : formula),
+  G |-c P --> ¬A --> ¬B -> G |-c P --> B --> A.
+Proof.
+  intros.
+  apply modus_ponens_d with (¬A --> ¬B).
+  assumption. apply from_axiom_d. constructor.
+Qed.
+
 Theorem double_negation_elimination_seq : forall (P : formula),
   [¬¬ P] |-c P.
 Proof.
   intros.
   apply modus_ponens_c with (¬¬P).
-  apply from_premise_c. left. reflexivity.
+  apply from_premise_c. auto_in.
   apply contraposition_c. apply contraposition_c.
   apply modus_ponens_c with (¬¬P).
-  apply from_premise_c. left. reflexivity.
+  apply from_premise_c. auto_in.
   apply from_axiom_c. constructor.
 Qed.
 
@@ -344,46 +483,18 @@ Theorem double_negation_elimination : forall (P : formula),
   [] |-c (¬¬P --> P).
 Proof.
   intros.
-  (* translate modus ponens with ¬¬P: add the antecedent *)
-  apply modus_ponens_c with (¬¬P --> ¬¬P). {
-    (* translate from_premise *)
-    apply id_impl.
-  }
-  (* continue modus ponens translation: add the implication*)
-  apply modus_ponens_c with (¬¬P --> ¬¬P --> P). {
-    (* Translate contraposition twice *)
-    apply modus_ponens_c with (¬¬P --> (¬P --> ¬¬¬P)). {
-      apply modus_ponens_c with (¬¬P --> (¬¬¬¬P --> ¬¬P)). {
-        (* from axiom *)
-        apply from_axiom_c.
-        constructor.
-      } (* continue second contrap *)
-      apply modus_ponens_c with (¬¬ P --> (¬¬¬¬P --> ¬¬P) --> (¬P --> ¬¬¬P)). {
-        (* this is just ¬¬P --> contraposition, but we need a K to do it *)
-        apply modus_ponens_c with ((¬¬¬¬P --> ¬¬P) --> (¬P --> ¬¬¬P)). {
-          apply from_axiom_c. constructor.
-        } (* And we are left with a K *)
-        apply from_axiom_c. constructor.
-      } (* Now it's the craved S *)
-      apply from_axiom_c. constructor.
-    }
-    (* continue the first contrap *)
-    (* it's basically the same *)
-    apply modus_ponens_c with (¬¬P --> (¬P --> ¬¬¬P) --> (¬¬P --> P)). {
-      apply modus_ponens_c with ((¬ P --> ¬ ¬ ¬ P) --> ¬ ¬ P --> P). {
-        apply from_axiom_c. constructor.
-      } apply from_axiom_c. constructor.
-    } apply from_axiom_c. constructor.
-  } 
-  (* and the final *)
-  apply from_axiom_c. constructor.
+  apply modus_ponens_d with (¬¬P).
+  apply id_impl.
+  apply contraposition_d. apply contraposition_d.
+  apply modus_ponens_d with (¬¬P).
+  apply id_impl.
+  apply from_axiom_d. constructor.
 Qed.
 
-(* that's horrible *)
-(* but the deduction theorem has that restriction, while the whole proof does not rely on variables at all! *)
-(* can we formulate a better way? maybe a fragment of the deduction theorem.. *)
-
-(* TODO : formulate some "deduction" version of the common rules *)
-(* TODO : use/implement tactics about simple list reasoning *)
+(* See how that closely imitates the former version
+ * the only difference is the from_premise part,
+ * since the premise is the precedent formula,
+ * it needs special translation. otherwise the two
+ * proofs are completely the same. *)
 
 (* TODO : more about other parts of the logic *)
