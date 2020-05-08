@@ -234,7 +234,7 @@ Module ListManipulationTactics.
       match goal with
       | |- incl (?A ++ ?B) ?C => apply incl_app
       | |- incl (?A :: nil) ?C => 
-        auto_in (* todo : use auto_in *)
+        auto_in
       | |- incl (?A :: ?B) ?C =>
         rewrite <- singleton; apply incl_app
       end
@@ -370,6 +370,15 @@ Proof.
   apply from_axiom_c. constructor.
 Qed.
 
+Lemma from_antecedent_d : forall (G : list formula) (A : formula),
+  G |-c A --> A.
+Proof.
+  intros.
+  apply weaken_c with [].
+  auto_incl.
+  apply id_impl.
+Qed.
+
 Lemma modus_ponens_d : forall (G : list formula) (P : formula) (A B : formula),
   G |-c P --> A -> G |-c P --> A --> B ->
   G |-c P --> B.
@@ -429,7 +438,7 @@ Definition andf P Q := ¬ (P --> ¬ Q).
 Notation "P &&& Q" := (andf P Q)
   (at level 80, right associativity) : predicative_calculus_scope.
 
-Definition equivf P Q := ((P --> Q) ||| (Q --> P)).
+Definition equivf P Q := ((P --> Q) &&& (Q --> P)).
 Notation "P === Q" := (equivf P Q)
   (at level 94, no associativity).
 
@@ -438,15 +447,23 @@ End PredicativeCalculusNotations.
 Import PredicativeCalculusNotations.
 
 (* Some theorems *)
+Lemma detach_d : forall (G : list formula) (P Q : formula),
+  G |-c Q -> G |-c P --> Q.
+Proof.
+  intros. apply modus_ponens_c with Q.
+  assumption.
+  apply from_axiom_c. constructor.
+Qed.
+
 Theorem hypothetical_syllogism : forall (P Q R : formula),
   [P --> Q ; Q --> R] |-c (P --> R).
 Proof.
   intros.
   apply modus_ponens_c with (P --> Q).
-  apply from_premise_c. left. reflexivity.
+  apply from_premise_c. auto_in.
   apply modus_ponens_c with (P --> Q --> R).
   apply modus_ponens_c with (Q --> R).
-  apply from_premise_c. right. left. reflexivity.
+  apply from_premise_c. auto_in.
   apply from_axiom_c. constructor.
   apply from_axiom_c. constructor.
 Qed.
@@ -479,15 +496,15 @@ Proof.
   apply from_axiom_c. constructor.
 Qed.
 
-Theorem double_negation_elimination : forall (P : formula),
-  [] |-c (¬¬P --> P).
+Theorem double_negation_elimination : forall (G : list formula) (P : formula),
+  G |-c (¬¬P --> P).
 Proof.
   intros.
   apply modus_ponens_d with (¬¬P).
-  apply id_impl.
+  apply from_antecedent_d.
   apply contraposition_d. apply contraposition_d.
   apply modus_ponens_d with (¬¬P).
-  apply id_impl.
+  apply from_antecedent_d.
   apply from_axiom_d. constructor.
 Qed.
 
@@ -497,4 +514,92 @@ Qed.
  * it needs special translation. otherwise the two
  * proofs are completely the same. *)
 
-(* TODO : more about other parts of the logic *)
+Lemma double_negation_elimination_c :forall (G : list formula) (P : formula),
+  G |-c ¬¬P -> G |-c P.
+Proof.
+  intros.
+  apply modus_ponens_c with (¬¬P).
+  assumption.
+  apply contraposition_c. apply contraposition_c.
+  apply detach_d. assumption.
+Qed.
+
+Lemma double_negation_elimination_d : forall (G : list formula) (P Q : formula),
+  G |-c P --> ¬¬Q -> G |-c P --> Q.
+Proof.
+  intros.
+  apply modus_ponens_d with (¬¬Q).
+  assumption.
+  apply contraposition_d. apply contraposition_d.
+  apply modus_ponens_d with (¬¬Q).
+  assumption.
+  apply from_axiom_d. constructor.
+Qed.
+
+Lemma double_negation_introduction_seq : forall (P : formula),
+  [P] |-c ¬¬P.
+Proof.
+  intros. apply modus_ponens_c with P.
+  apply from_premise_c. auto_in.
+  apply contraposition_c.
+  apply double_negation_elimination.
+Qed.
+
+Lemma double_negation_introduction_c : forall (G : list formula) (P : formula),
+  G |-c P -> G |-c ¬¬P.
+Proof.
+  intros. apply modus_ponens_c with P.
+  assumption.
+  apply contraposition_c.
+  apply double_negation_elimination.
+Qed.
+
+Lemma double_negation_introduction : forall (G : list formula) (P : formula),
+  G |-c P --> ¬¬P.
+Proof.
+  intros. apply modus_ponens_d with P.
+  apply from_antecedent_d.
+  apply contraposition_d.
+  apply detach_d.
+  apply double_negation_elimination.
+Qed.
+
+Lemma double_negation_introduction_d : forall (G : list formula) (P Q : formula),
+  G |-c P --> Q -> G |-c P --> ¬¬Q.
+Proof.
+  intros. apply modus_ponens_d with Q.
+  assumption.
+  apply contraposition_d.
+  apply detach_d.
+  apply double_negation_elimination.
+Qed.
+
+Lemma ex_falso_quodlibet : forall A B : formula, [] |-c A --> ¬ A --> B.
+Proof.
+  intros. apply contraposition_d.
+  apply modus_ponens_d with (¬¬A).
+  apply double_negation_introduction.
+  apply from_axiom_d.
+  constructor.
+Qed.
+
+Theorem orf_introl : forall (G : list formula)(A B : formula),
+  G |-c A --> (A ||| B).
+Proof.
+  intros. apply weaken_c with []. auto_incl.
+  apply ex_falso_quodlibet.
+Qed.
+
+Theorem orf_intror : forall (G : list formula)(A B : formula),
+  G |-c B --> (A ||| B).
+Proof.
+  intros. apply from_axiom_c. constructor.
+Qed.
+
+Theorem orf_elim : forall (G : list formula)(A B C : formula),
+  G |-c (A --> C) --> (B --> C) --> (A ||| B --> C).
+Proof.
+  intros. unfold orf.
+Abort.
+
+End Predicative.

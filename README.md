@@ -21,7 +21,9 @@ to a meta-theorem about `|-c`; every meta-theorem about `|-c` (e.g.
 an antecedent attached in each sequent (e.g. `|-c A --> (P --> Q)` implies
 `|-c A --> (¬Q --> ¬P)`). They will have the name `foo`, `foo_c`, `foo_d`,
 correspondingly. The latter lift is the essence of **deduction theorem**,
-which is also included in our Coq file.
+which is also included in our Coq file. After the deduction theorem, we can
+yet obtain a _forth_ equivalent version, `foo_seq`, which have their antecedent
+moved to the premise.
 
 Next, we will prove some useful results on other derived logical connectives,
 and get ready to dive into some concrete theories!
