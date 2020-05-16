@@ -58,12 +58,22 @@ Inductive Proves : list formula -> formula -> Prop :=
   | universal_generalization : forall (P : formula) (v : variable) (prem : list formula),
       (Proves prem P) -> (Proves prem (forallf v P)).
 
+Inductive ProvesPropositionally : list formula -> formula -> Prop :=
+| from_premise_p : forall (prem : list formula) (stmt : formula),
+    (In stmt prem -> ProvesPropositionally prem stmt)
+| modus_ponens_p : forall (P Q : formula) (prem : list formula),
+    (ProvesPropositionally prem P) -> (ProvesPropositionally prem (P --> Q)) ->
+    (ProvesPropositionally prem Q).
+
 Notation " Gamma |-0 P " := (Proves Gamma P)
   (at level 95, no associativity).
 
-Example seq_id : forall P : formula, [P] |-0 P.
+Notation " Gamma |-p P " := (ProvesPropositionally Gamma P)
+  (at level 95, no associativity).
+
+Example seq_id_p : forall P : formula, [P] |-p P.
 Proof.
-  intros. apply from_premise. simpl. left. reflexivity.
+  intros. apply from_premise_p. simpl. left. reflexivity.
 Qed.
 
 Lemma weaken : forall (prem prem' : list formula) (P : formula),
